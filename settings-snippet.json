@@ -1,0 +1,73 @@
+{
+  "$comment": "Copy relevant sections into ~/.claude/settings.json. Adjust paths to match your install location.",
+  "permissions": {
+    "allow": [
+      "Bash(git -C * log*)",
+      "Bash(git -C * status*)",
+      "Bash(git -C * diff*)",
+      "Bash(git -C * show*)",
+      "Bash(git -C * branch*)",
+      "Bash(git -C * rev-parse*)",
+      "Bash(bash *)"
+    ]
+  },
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"PATH_TO_AUREONTOOLS/hooks/log-permission-request.js\"",
+            "statusMessage": "Logging permission request"
+          },
+          {
+            "type": "prompt",
+            "prompt": "You are a security gate for a CLI coding assistant. Evaluate whether this tool call is safe to auto-approve.\n\nTool call details:\n$ARGUMENTS\n\nRules:\n- Read-only operations (listing files, reading, searching, git log/status/diff, gh repo list, API GETs) are SAFE.\n- Writing to project files in the working directory is generally SAFE.\n- Modifying system files, dotfiles outside the project, credentials, or env vars is DANGEROUS.\n- Network requests that send/modify data (POST/PUT/DELETE to APIs, git push, gh pr merge) need caution.\n- Destructive operations (rm -rf, git reset --hard, DROP TABLE) are DANGEROUS.\n\nRespond with ONLY valid JSON: {\"decision\": \"approve\"} or {\"decision\": \"block\", \"reason\": \"brief explanation\"}",
+            "model": "claude-haiku-4-5-20251001"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"PATH_TO_AUREONTOOLS/hooks/reject-unsafe-bash.js\"",
+            "statusMessage": "Checking for shell expansion / newline-# patterns"
+          },
+          {
+            "type": "command",
+            "command": "node \"PATH_TO_AUREONTOOLS/hooks/reject-bash-powershell.js\"",
+            "statusMessage": "Checking for powershell-via-bash"
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"PATH_TO_AUREONTOOLS/hooks/approve-safe-powershell.js\"",
+            "statusMessage": "Checking PowerShell command safety"
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "everything": {
+      "command": "python",
+      "args": ["PATH_TO_AUREONTOOLS/everything-mcp/server.py"],
+      "env": {
+        "EVERYTHING_ES_PATH": "C:\\Program Files\\Everything\\es.exe"
+      }
+    }
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"PATH_TO_AUREONTOOLS/statusline/statusline-command.sh\""
+  }
+}
