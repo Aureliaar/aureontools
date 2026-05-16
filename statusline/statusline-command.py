@@ -12,8 +12,8 @@ except Exception as e:
     sys.exit(0)
 
 try:
-    cw    = d.get("context_window", {})
-    cu    = cw.get("current_usage", {})
+    cw    = d.get("context_window") or {}
+    cu    = cw.get("current_usage") or {}
     sid   = d.get("session_id", "unknown")
     model_raw = d.get("model", "")
     if isinstance(model_raw, dict):
@@ -123,11 +123,6 @@ try:
     elif pct >= 50: ctx_color = YLW
     else:           ctx_color = GRN
 
-    # peak time
-    def is_peak():
-        now = datetime.now(timezone.utc)
-        return now.weekday() < 5 and 12 <= now.hour < 18
-
     # model label
     model_label = model[len("claude-"):] if model.startswith("claude-") else model
 
@@ -141,7 +136,7 @@ try:
         right_parts.append(f"{c5}5h {pct_5h:.0f}%{RST} {time_left(resets_5h)}")
         right_parts.append(f"{c7}7d {pct_7d:.0f}%{RST} {time_left(resets_7d)}")
 
-    separator = f" {RED}PEAK TIME{RST} " if is_peak() else "\t\t\t"
+    separator = "\t\t\t"
     model_prefix = f"{model_label} · " if model_label else ""
     print(
         f"{model_prefix}{ctx_color}{pct}%{RST}/{fmt(size)}"
