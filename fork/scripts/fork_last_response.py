@@ -25,6 +25,7 @@ if sys.stdout.encoding != "utf-8":
 HOME = Path.home()
 CLAUDE_PROJECTS_DIR = HOME / ".claude" / "projects"
 CODEX_SESSIONS_DIR = HOME / ".codex" / "sessions"
+COPILOT_SESSION_STATE_DIR = HOME / ".copilot" / "session-state"
 
 
 def normalize_path(path: str | None) -> str | None:
@@ -61,6 +62,16 @@ def iter_codex_logs() -> Iterable[Path]:
     return sorted(CODEX_SESSIONS_DIR.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
 
 
+def iter_copilot_logs() -> Iterable[Path]:
+    if not COPILOT_SESSION_STATE_DIR.is_dir():
+        return []
+    return sorted(
+        COPILOT_SESSION_STATE_DIR.glob("*/events.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+
 def get_jsonl_first_object(path: Path) -> dict | None:
     try:
         with path.open("r", encoding="utf-8", errors="replace") as f:
@@ -74,6 +85,25 @@ def match_project_dir(candidate: str | None, project_dir: str | None) -> bool:
     if project_dir is None:
         return True
     return normalize_path(candidate) == project_dir
+
+
+def get_copilot_workspace_data(log_path: Path) -> dict | None:
+    workspace_path = log_path.with_name("workspace.yaml")
+    if not workspace_path.is_file():
+        return None
+
+    data: dict[str, str] = {}
+    try:
+        with workspace_path.open("r", encoding="utf-8", errors="replace") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                data[key.strip()] = value.strip()
+    except OSError:
+        return None
+    return data
 
 
 def find_claude_by_name(name: str, project_dir: str | None) -> Path | None:
@@ -109,9 +139,31 @@ def find_codex_by_name(name: str, project_dir: str | None) -> Path | None:
     return None
 
 
+def find_copilot_by_name(name: str, project_dir: str | None) -> Path | None:
+    name_lower = name.lower()
+    for path in iter_copilot_logs():
+        workspace = get_copilot_workspace_data(path) or {}
+        cwd = workspace.get("cwd")
+        if not match_project_dir(cwd, project_dir):
+            continue
+
+        summary = workspace.get("summary", "")
+        if summary.lower() == name_lower:
+            return path
+
+        head = read_head(path)
+        if name_lower in head.lower():
+            return path
+    return None
+
+
 def find_by_name(name: str, project_dir: str | None) -> Path | None:
     normalized_project = normalize_path(project_dir)
-    return find_claude_by_name(name, normalized_project) or find_codex_by_name(name, normalized_project)
+    return (
+        find_claude_by_name(name, normalized_project)
+        or find_codex_by_name(name, normalized_project)
+        or find_copilot_by_name(name, normalized_project)
+    )
 
 
 def resolve_path(session_id_or_path: str) -> Path:
@@ -126,6 +178,10 @@ def resolve_path(session_id_or_path: str) -> Path:
     codex_matches = list(CODEX_SESSIONS_DIR.rglob(f"*{session_id_or_path}*.jsonl")) if CODEX_SESSIONS_DIR.is_dir() else []
     if codex_matches:
         return max(codex_matches, key=lambda p: p.stat().st_mtime)
+
+    copilot_events = COPILOT_SESSION_STATE_DIR / session_id_or_path / "events.jsonl"
+    if copilot_events.is_file():
+        return copilot_events
 
     print(f"Error: Could not find conversation log for '{session_id_or_path}'", file=sys.stderr)
     sys.exit(1)
@@ -188,6 +244,22 @@ def extract_codex_text(obj: dict) -> tuple[str, bool] | None:
     return None
 
 
+def extract_copilot_text(obj: dict) -> tuple[str, bool] | None:
+    if obj.get("type") != "assistant.message":
+        return None
+
+    data = obj.get("data", {})
+    text = data.get("content", "")
+    tool_requests = data.get("toolRequests", [])
+    has_tool_use = isinstance(tool_requests, list) and len(tool_requests) > 0
+
+    if isinstance(text, str) and text.strip():
+        return (text, has_tool_use)
+    if has_tool_use:
+        return ("", True)
+    return None
+
+
 def get_last_response(path: Path, max_chars: int) -> None:
     lines = read_tail(path)
 
@@ -200,7 +272,7 @@ def get_last_response(path: Path, max_chars: int) -> None:
         except json.JSONDecodeError:
             continue
 
-        extracted = extract_claude_text(obj) or extract_codex_text(obj)
+        extracted = extract_claude_text(obj) or extract_codex_text(obj) or extract_copilot_text(obj)
         if extracted is None:
             continue
 
@@ -222,7 +294,7 @@ def get_last_response(path: Path, max_chars: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Extract the last assistant response from a Claude Code or Codex conversation log"
+        description="Extract the last assistant response from a Claude Code, Codex, or Copilot conversation log"
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("session", nargs="?", help="Session ID or path to a .jsonl file")

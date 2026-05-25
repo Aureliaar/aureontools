@@ -21,18 +21,18 @@ try:
     else:
         model = model_raw or ""
 
-    pct  = cw.get("used_percentage", 0)
-    size = cw.get("context_window_size", 0)
+    pct  = cw.get("used_percentage") or 0
+    size = cw.get("context_window_size") or 0
     last_call = (
-        cu.get("cache_read_input_tokens", 0)
-        + cu.get("cache_creation_input_tokens", 0)
-        + cu.get("input_tokens", 0)
-        + cu.get("output_tokens", 0)
+        (cu.get("cache_read_input_tokens") or 0)
+        + (cu.get("cache_creation_input_tokens") or 0)
+        + (cu.get("input_tokens") or 0)
+        + (cu.get("output_tokens") or 0)
     )
     cost_obj = d.get("cost") or {}
-    cost = cost_obj.get("total_cost_usd", 0.0) if isinstance(cost_obj, dict) else 0.0
+    cost = (cost_obj.get("total_cost_usd") or 0.0) if isinstance(cost_obj, dict) else 0.0
 
-    # sys-prompt baseline
+    # ── sys-prompt baseline ──────────────────────────────────────────────────────
     base_dir  = os.path.expanduser("~/.claude/statusline-baselines")
     os.makedirs(base_dir, exist_ok=True)
     base_file = os.path.join(base_dir, sid)
@@ -45,7 +45,7 @@ try:
         with open(base_file, "w") as f:
             f.write(str(sys_est))
 
-    # usage windows
+    # ── usage windows ────────────────────────────────────────────────────────────
     def get_usage():
         """Return (pct_5h, resets_5h, pct_7d, resets_7d) or Nones. Cached 5 min."""
         cache_file = os.path.expanduser("~/.claude/statusline-usage-cache.json")
@@ -108,7 +108,7 @@ try:
         return YLW if remaining < threshold_per_unit * units_left else ""
 
 
-    # helpers
+    # ── helpers ──────────────────────────────────────────────────────────────────
     def fmt(n):
         if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
         if n >= 1_000:     return f"{n/1_000:.1f}k"
@@ -123,10 +123,10 @@ try:
     elif pct >= 50: ctx_color = YLW
     else:           ctx_color = GRN
 
-    # model label
+    # ── model label ──────────────────────────────────────────────────────────────
     model_label = model[len("claude-"):] if model.startswith("claude-") else model
 
-    # assemble line
+    # ── assemble line ─────────────────────────────────────────────────────────────
     pct_5h, resets_5h, pct_7d, resets_7d = get_usage()
 
     right_parts = [f"${cost:.2f}"]

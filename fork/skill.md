@@ -37,7 +37,7 @@ When invoked with `/fork [plan] <task description>`:
    if [[ ! -f "$SKILL_DIR/scripts/fork-claude.sh" ]]; then
      SKILL_DIR="$HOME/.claude/skills/fork"
    fi
-   bash "$SKILL_DIR/scripts/fork-claude.sh" "<short title>" [--provider claude|claude-glm|gemini|codex] [--mode plan|exec] <<'EOF'
+   bash "$SKILL_DIR/scripts/fork-claude.sh" "<short title>" [--provider claude|claude-glm|gemini|codex|copilot] [--mode plan|exec] <<'EOF'
    # Fork: <short title>
 
    ## Do
@@ -55,6 +55,8 @@ When invoked with `/fork [plan] <task description>`:
    - `/fork gemini fix the curves` → exec mode, gemini
    - `/fork gemini plan fix the curves` → plan mode, gemini
    - `/fork plan gemini fix the curves` → plan mode, gemini
+   - `/fork copilot fix the curves` → exec mode, copilot
+   - `/fork plan copilot fix the curves` → plan mode, copilot
 
 3. **Report back** in one line with the fork name and mode, and continue the current conversation.
 

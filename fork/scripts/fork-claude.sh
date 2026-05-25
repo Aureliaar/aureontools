@@ -2,7 +2,7 @@
 # fork-claude.sh - Launch a new AI session in a new terminal window.
 #
 # Usage:
-#   bash scripts/fork-claude.sh <title> [--provider claude|claude-glm|gemini|codex] <<< "plan content"
+#   bash scripts/fork-claude.sh <title> [--provider claude|claude-glm|gemini|codex|copilot] <<< "plan content"
 #
 # Plan content is read from stdin so the caller can do it in one command.
 # Default provider: current session provider (falls back to claude)
@@ -40,17 +40,22 @@ resolve_current_provider() {
     return
   fi
 
-  if [[ -n "${CODEX_THREAD_ID:-}" || -n "${CODEX_MANAGED_BY_NPM:-}" ]]; then
-    echo "codex"
-    return
-  fi
-
   if [[ -n "${CLAUDECODE:-}" ]]; then
     if [[ "${CLAUDE_CODE_PROVIDER:-${CLAUDECODE_PROVIDER:-}}" == "claude-glm" ]]; then
       echo "claude-glm"
     else
       echo "claude"
     fi
+    return
+  fi
+
+  if [[ -n "${COPILOT_CLI:-}" || -n "${COPILOT_AGENT_SESSION_ID:-}" ]]; then
+    echo "copilot"
+    return
+  fi
+
+  if [[ -n "${CODEX_THREAD_ID:-}" || -n "${CODEX_MANAGED_BY_NPM:-}" ]]; then
+    echo "codex"
     return
   fi
 
@@ -121,6 +126,9 @@ case "PROVIDER_PLACEHOLDER" in
     ;;
   codex)
     codex "${SYSTEM_PROMPT}"
+    ;;
+  copilot)
+    copilot -i "${SYSTEM_PROMPT}"
     ;;
   *)
     echo "Unknown provider: PROVIDER_PLACEHOLDER" >&2
