@@ -9,6 +9,19 @@
 
 set -euo pipefail
 
+# Convert MSYS/Git-Bash paths (/e/foo, /c/Users) to mixed Windows form
+# (E:/foo) that bash, native Python, and `claude --settings` all accept.
+to_native() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WAIT_SCRIPT="$(to_native "$SCRIPT_DIR/fork-inbox-wait.sh")"
+
 TITLE=""
 REQUESTED_PROVIDER=""
 MODE="exec"
@@ -67,7 +80,7 @@ if [[ "$PROVIDER" == "current" ]]; then
   PROVIDER="$(resolve_current_provider)"
 fi
 
-PROJECT_DIR="${FORK_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+PROJECT_DIR="$(to_native "${FORK_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}")"
 
 mkdir -p "$PROJECT_DIR/tmp/forks"
 
@@ -79,12 +92,48 @@ SLUG="$(slugify "$TITLE")"
 DATE_PREFIX="$(date +%Y%m%d)"
 PLAN_FILE="$PROJECT_DIR/tmp/forks/${DATE_PREFIX}-${SLUG}.md"
 METADATA_FILE="$PROJECT_DIR/tmp/forks/${DATE_PREFIX}-${SLUG}.json"
+INBOX_FILE="$PROJECT_DIR/tmp/forks/${DATE_PREFIX}-${SLUG}.inbox"
+SETTINGS_FILE="$PROJECT_DIR/tmp/forks/${DATE_PREFIX}-${SLUG}.settings.json"
 
 cat > "$PLAN_FILE"
 
 if [[ ! -s "$PLAN_FILE" ]]; then
   echo "Error: No plan content provided on stdin" >&2
   exit 1
+fi
+
+# --- Mailbox: let the spawning session send messages to this fork ----------
+# Only Claude providers support the Stop hook the mailbox relies on.
+HOOK_TIMEOUT="${FORK_INBOX_TIMEOUT:-1800}"
+INBOX_MAX_WAIT=$(( HOOK_TIMEOUT > 200 ? HOOK_TIMEOUT - 100 : HOOK_TIMEOUT ))
+SETTINGS_ARG=""
+
+if [[ "$PROVIDER" == "claude" || "$PROVIDER" == "claude-glm" ]]; then
+  # Clear any stale inbox / detach marker from a previous same-slug fork.
+  rm -f "$INBOX_FILE" "$INBOX_FILE.detached" "$INBOX_FILE.processing"
+  : > "$INBOX_FILE"
+
+  python - "$SETTINGS_FILE" "$WAIT_SCRIPT" "$INBOX_FILE" "$HOOK_TIMEOUT" <<'PY'
+import json, sys
+settings_path, wait_script, inbox, timeout = sys.argv[1:]
+command = 'bash "%s" "%s"' % (wait_script, inbox)
+settings = {
+    "hooks": {
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {"type": "command", "command": command, "timeout": int(timeout)}
+                ],
+            }
+        ]
+    }
+}
+with open(settings_path, "w", encoding="utf-8") as f:
+    json.dump(settings, f, ensure_ascii=False, indent=2)
+PY
+
+  SETTINGS_ARG="--settings \"$SETTINGS_FILE\""
 fi
 
 LAUNCHER="$PROJECT_DIR/tmp/forks/_launcher_${SLUG}_$$.sh"
@@ -94,6 +143,7 @@ cat > "$LAUNCHER" <<'SCRIPT'
 set -euo pipefail
 
 cd 'PROJECT_DIR_PLACEHOLDER'
+export FORK_INBOX_MAX_WAIT='MAX_WAIT_PLACEHOLDER'
 echo '=== Forked Session (PROVIDER_PLACEHOLDER) ==='
 cat 'PLAN_FILE_PLACEHOLDER'
 echo ''
@@ -115,11 +165,17 @@ fi
 case "PROVIDER_PLACEHOLDER" in
   claude)
     unset CLAUDECODE
-    claude --name "FORK_NAME_PLACEHOLDER" "${SYSTEM_PROMPT}"
+    echo '[mailbox] This fork listens for messages from the spawning session.'
+    echo '[mailbox] When a turn ends it parks and waits; press Esc to take manual control.'
+    echo ''
+    claude --name "FORK_NAME_PLACEHOLDER" SETTINGS_ARG_PLACEHOLDER "${SYSTEM_PROMPT}"
     ;;
   claude-glm)
     unset CLAUDECODE
-    claude-glm --name "FORK_NAME_PLACEHOLDER" "${SYSTEM_PROMPT}"
+    echo '[mailbox] This fork listens for messages from the spawning session.'
+    echo '[mailbox] When a turn ends it parks and waits; press Esc to take manual control.'
+    echo ''
+    claude-glm --name "FORK_NAME_PLACEHOLDER" SETTINGS_ARG_PLACEHOLDER "${SYSTEM_PROMPT}"
     ;;
   gemini)
     gemini "${SYSTEM_PROMPT}"
@@ -150,15 +206,18 @@ sed -i "s|PLAN_FILE_PLACEHOLDER|$(escape_for_sed "$PLAN_FILE")|g" "$LAUNCHER"
 sed -i "s|FORK_NAME_PLACEHOLDER|$(escape_for_sed "$TITLE")|g" "$LAUNCHER"
 sed -i "s|PROVIDER_PLACEHOLDER|$(escape_for_sed "$PROVIDER")|g" "$LAUNCHER"
 sed -i "s|MODE_PLACEHOLDER|$(escape_for_sed "$MODE")|g" "$LAUNCHER"
+sed -i "s|SETTINGS_ARG_PLACEHOLDER|$(escape_for_sed "$SETTINGS_ARG")|g" "$LAUNCHER"
+sed -i "s|MAX_WAIT_PLACEHOLDER|$(escape_for_sed "$INBOX_MAX_WAIT")|g" "$LAUNCHER"
 
 chmod +x "$LAUNCHER"
 
-python - "$METADATA_FILE" "$TITLE" "$PROVIDER" "$PROJECT_DIR" "$PLAN_FILE" <<'PY'
+python - "$METADATA_FILE" "$TITLE" "$PROVIDER" "$PROJECT_DIR" "$PLAN_FILE" "$INBOX_FILE" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 
-metadata_path, title, provider, project_dir, plan_file = sys.argv[1:]
+metadata_path, title, provider, project_dir, plan_file, inbox_file = sys.argv[1:]
+has_mailbox = provider in ("claude", "claude-glm")
 with open(metadata_path, "w", encoding="utf-8") as f:
     json.dump(
         {
@@ -166,6 +225,7 @@ with open(metadata_path, "w", encoding="utf-8") as f:
             "provider": provider,
             "project_dir": project_dir,
             "plan_file": plan_file,
+            "inbox_file": inbox_file if has_mailbox else None,
             "launched_at": datetime.now(timezone.utc).isoformat(),
         },
         f,
@@ -227,3 +287,7 @@ fi
 echo "Forked session launched: $TITLE (provider: $PROVIDER)"
 echo "Plan: $PLAN_FILE"
 echo "Metadata: $METADATA_FILE"
+if [[ -n "$SETTINGS_ARG" ]]; then
+  echo "Inbox: $INBOX_FILE"
+  echo "Send a message: python \"$SCRIPT_DIR/fork_send.py\" --by-name \"$TITLE\" \"<message>\""
+fi

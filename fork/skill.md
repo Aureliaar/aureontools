@@ -104,6 +104,35 @@ python "$SKILL_DIR/scripts/fork_last_response.py" <session-uuid-or-path>
 - If a fork is blocking next steps, poll it and report back rather than saying "check with `/fork status`".
 - If the user asks "what happened with X?" or "did the fork finish?" — run the script immediately, don't redirect them.
 
+## Sending a message to a fork (parent → child)
+
+Claude forks (`claude` / `claude-glm` only) launch with a **mailbox**: a Stop hook
+that parks when the fork finishes a turn and waits for messages from the spawning
+session. Send one with:
+
+```bash
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/fork"
+if [[ ! -f "$SKILL_DIR/scripts/fork_send.py" ]]; then
+  SKILL_DIR="$HOME/.claude/skills/fork"
+fi
+python "$SKILL_DIR/scripts/fork_send.py" --by-name "<fork title>" "<message>"
+```
+
+- The message is delivered as the fork's next instruction the moment it lands
+  (the fork wakes from its parked Stop hook), or at the next turn boundary if the
+  fork is mid-task.
+- **Best-effort, not guaranteed.** If the fork has been idle longer than its
+  parking window (~30 min) or the user pressed Esc to drive it manually, the
+  message waits in the inbox until the fork next finishes a turn.
+- Control verbs: `--detach` tells the fork to stop parking (so it can go idle /
+  exit); `--status` sends a heartbeat ping. A normal message after `--detach`
+  re-arms parking.
+- Combine with `fork_last_response.py` for full round-trips: send a task, read the
+  conclusion.
+
+This is for steering an *active* fork without interrupting your own conversation —
+not a substitute for putting full context in the plan file at launch.
+
 ## Important
 
 - **Never ask the user for more info before launching.**
