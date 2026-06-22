@@ -164,14 +164,28 @@ fi
 
 case "PROVIDER_PLACEHOLDER" in
   claude)
+    # Start as a clean, independent top-level session. Unset NOT JUST CLAUDECODE
+    # but every inherited CLAUDE_CODE_* var — chiefly CLAUDE_CODE_SESSION_ID. If
+    # left set, the fork reuses the parent's session identity for its cloud
+    # remote-control bridge, collides with the parent's epoch (409), gets an
+    # end_session and is ARCHIVED + torn down instead of persisting as a normal
+    # local session. The fork still does its work, but is then NON-RESUMABLE.
     unset CLAUDECODE
+    for __cc in $(compgen -v 2>/dev/null | grep '^CLAUDE_CODE_' || true); do unset "$__cc"; done
     echo '[mailbox] This fork listens for messages from the spawning session.'
     echo '[mailbox] When a turn ends it parks and waits; press Esc to take manual control.'
     echo ''
     claude --name "FORK_NAME_PLACEHOLDER" SETTINGS_ARG_PLACEHOLDER "${SYSTEM_PROMPT}"
     ;;
   claude-glm)
+    # Start as a clean, independent top-level session. Unset NOT JUST CLAUDECODE
+    # but every inherited CLAUDE_CODE_* var — chiefly CLAUDE_CODE_SESSION_ID. If
+    # left set, the fork reuses the parent's session identity for its cloud
+    # remote-control bridge, collides with the parent's epoch (409), gets an
+    # end_session and is ARCHIVED + torn down instead of persisting as a normal
+    # local session. The fork still does its work, but is then NON-RESUMABLE.
     unset CLAUDECODE
+    for __cc in $(compgen -v 2>/dev/null | grep '^CLAUDE_CODE_' || true); do unset "$__cc"; done
     echo '[mailbox] This fork listens for messages from the spawning session.'
     echo '[mailbox] When a turn ends it parks and waits; press Esc to take manual control.'
     echo ''
