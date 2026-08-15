@@ -1,0 +1,50 @@
+{
+  "$comment": "Registry of local services. Copy to ports.json next to your projects, then run: node hubd.mjs --registry <path>",
+  "root": "E:/experiments",
+  "projects": [
+    {
+      "name": "daw",
+      "dir": "daw",
+      "kind": "web",
+      "port": 4173,
+      "start": "npm start",
+      "note": "Folio/lesson static server. PORT env overrides.",
+      "what": "DAW folio — canonical",
+      "autostart": true
+    },
+    {
+      "name": "storyteller",
+      "dir": "storyteller/frontend",
+      "kind": "web",
+      "port": 4047,
+      "start": ".\\dev-frontend.ps1",
+      "note": "Bare `npm run dev` falls back to vite 5173.",
+      "what": "Storyteller React/Vite frontend"
+    },
+    {
+      "name": "tetris",
+      "dir": "tetris",
+      "kind": "web",
+      "port": 3000,
+      "start": "npm start",
+      "what": "Tetris"
+    },
+    {
+      "name": "breath",
+      "dir": "breath",
+      "kind": "web",
+      "port": 8000,
+      "start": "python -m http.server 8000",
+      "file": "breath/breath_viz.html",
+      "what": "Breath visualisation"
+    },
+    {
+      "name": "vs-debugger",
+      "dir": "Tools/vs_debugger",
+      "kind": "service",
+      "port": 52710,
+      "start": "python vs_debugger_mcp.py",
+      "what": "Visual Studio debugger MCP"
+    }
+  ]
+}

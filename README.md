@@ -10,6 +10,7 @@ Claude Code extensions: MCP servers, hooks, statusline, and skills.
 | `statusline/` | Status line showing context %, cost, and 5h/7d usage windows |
 | `fork/` | Skill to launch side AI sessions in new terminal windows |
 | `hooks/` | PreToolUse / PermissionRequest hooks for safety and auto-approval |
+| `hub/` | Local project hub: one index of every `localhost:port`, with start/stop |
 
 ## Setup
 
@@ -30,6 +31,35 @@ pip install mcp
 ### Fork skill
 
 Symlink or copy `fork/` into `~/.claude/skills/fork/` (or `~/.codex/skills/fork/`).
+
+### Hub
+
+Answers "which localhost port was that thing again?" — one page listing every local
+project, whether it's up, and how to start it.
+
+Describe your projects in a `ports.json` (see `hub/ports.example.json`); the registry
+lives with your projects, the code stays here. Then either:
+
+```
+node hub/hubd.mjs --registry E:\experiments\ports.json
+```
+
+for the live version at `http://localhost:7777` — real TCP liveness, Start/Stop/Log
+buttons per project, and anything flagged `"autostart": true` booted on launch. Run it
+at logon with `hub\install-hubd.ps1` (Task Scheduler, current user, no admin).
+
+Or:
+
+```
+node hub/build-hub.mjs --registry E:\experiments\ports.json
+```
+
+for a static `hub.html` next to the registry that needs nothing running — openable off
+disk, but no buttons, and its liveness probe is a best-effort `no-cors` fetch that some
+browsers block.
+
+`hubd` binds loopback only and refuses cross-origin requests, since its API can run any
+command in the registry.
 
 ### Statusline
 
