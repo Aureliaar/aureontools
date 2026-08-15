@@ -14,7 +14,7 @@
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { page, computeProjects, resolveRegistry } from './hub-ui.mjs';
@@ -45,6 +45,37 @@ function loadRegistry() {
 
 function projectDir(reg, p) {
   return isAbsolute(p.dir) ? p.dir : resolve(reg.root, p.dir);
+}
+
+// ---------------------------------------------------------------- usage store
+//
+// Kept beside the registry but in its own file: ports.json is hand-edited, this
+// is machine-written, and mixing the two would mean fighting over the same file.
+
+const STATE_FILE = resolve(dirname(REGISTRY), 'hub-state.json');
+
+const state = (() => {
+  try { return JSON.parse(readFileSync(STATE_FILE, 'utf8')); }
+  catch { return { lastSeen: {}, starts: {} }; }
+})();
+state.lastSeen ||= {};
+state.starts ||= {};
+
+let flushTimer = null;
+function saveState() {
+  if (flushTimer) return; // coalesce the 3s-poll churn into one write
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    try { writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n'); }
+    catch (e) { console.error(`[hubd] could not write ${STATE_FILE}: ${e.message}`); }
+  }, 2000);
+  flushTimer.unref?.();
+}
+
+function touch(name, { counts = false } = {}) {
+  state.lastSeen[name] = Date.now();
+  if (counts) state.starts[name] = (state.starts[name] || 0) + 1;
+  saveState();
 }
 
 // ---------------------------------------------------------------- process table
@@ -85,6 +116,7 @@ function start(name) {
     if (cur) cur.child = null; // keep the logs around for inspection
   });
 
+  touch(name, { counts: true });
   console.log(`[hubd] started ${name} (pid ${child.pid}) in ${cwd}`);
   return entry;
 }
@@ -115,12 +147,27 @@ function isListening(port, timeout = 400) {
   });
 }
 
+/** port -> was it up last poll? Used to spot the moment something comes up. */
+const prevLive = new Map();
+
 async function status() {
   const reg = loadRegistry();
   const ports = [...new Set(reg.projects.filter((p) => p.port).map((p) => p.port))];
   const live = Object.fromEntries(
     await Promise.all(ports.map(async (port) => [port, await isListening(port)]))
   );
+
+  // Count a port coming up as usage, so servers you start from a terminal still
+  // register. Only the transition counts — something parked on a port for weeks
+  // isn't "recently used", and would otherwise squat in the recent tier forever.
+  // Shared ports are skipped: with seven forks on 4173 there's no telling which.
+  for (const port of ports) {
+    const wasLive = prevLive.get(port);
+    prevLive.set(port, live[port]);
+    if (!live[port] || wasLive !== false) continue;
+    const owners = reg.projects.filter((p) => p.port === port);
+    if (owners.length === 1) touch(owners[0].name);
+  }
 
   // A port can be up because we started it, or because it was already there.
   const out = {};
@@ -173,18 +220,29 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       const reg = loadRegistry();
       const html = page({
-        projects: computeProjects(reg),
+        projects: computeProjects(reg, state),
         interactive: true,
-        footer: `Served by <code>hubd.mjs</code> from <code>${REGISTRY}</code>. ` +
-                `Add a project there — no restart needed. ` +
-                `Green = something is listening; hover a dot to see whether the hub started it.`,
+        footer: `Served by <code>hubd.mjs</code> from <code>${REGISTRY}</code>, usage in ` +
+                `<code>hub-state.json</code>. Add a project to the registry — no restart needed. ` +
+                `Tiers are by recency (last ${reg.recentDays ?? 14} days); ` +
+                `<code>"pin"</code> and <code>"archive"</code> override. Reload to re-tier.`,
       });
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(html);
     }
 
     if (req.method === 'GET' && url.pathname === '/api/state') {
-      return json(res, 200, { status: await status() });
+      return json(res, 200, { status: await status(), lastSeen: state.lastSeen });
+    }
+
+    // Fired by sendBeacon when a project link is clicked — the one signal that
+    // can attribute usage when several projects share a port.
+    if (req.method === 'POST' && url.pathname === '/api/touch') {
+      const { name } = await readBody(req);
+      const reg = loadRegistry();
+      if (!reg.projects.some((p) => p.name === name)) throw new Error(`unknown project: ${name}`);
+      touch(name);
+      return json(res, 200, { ok: true });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/logs') {

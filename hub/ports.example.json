@@ -1,6 +1,7 @@
 {
-  "$comment": "Registry of local services. Copy to ports.json next to your projects, then run: node hubd.mjs --registry <path>",
+  "$comment": "Registry of local services. Copy to ports.json next to your projects, then: node hubd.mjs --registry <path>. Hand-edited; usage data lives separately in hub-state.json.",
   "root": "E:/experiments",
+  "recentDays": 14,
   "projects": [
     {
       "name": "daw",
@@ -19,7 +20,8 @@
       "port": 4047,
       "start": ".\\dev-frontend.ps1",
       "note": "Bare `npm run dev` falls back to vite 5173.",
-      "what": "Storyteller React/Vite frontend"
+      "what": "Storyteller React/Vite frontend",
+      "pin": true
     },
     {
       "name": "tetris",
@@ -37,6 +39,16 @@
       "start": "python -m http.server 8000",
       "file": "breath/breath_viz.html",
       "what": "Breath visualisation"
+    },
+    {
+      "name": "orbital-logistics",
+      "dir": "orbital-logistics",
+      "kind": "web",
+      "port": 8065,
+      "start": "npm run serve",
+      "file": "orbital-logistics/index.html",
+      "what": "Orbital logistics game",
+      "archive": true
     },
     {
       "name": "vs-debugger",

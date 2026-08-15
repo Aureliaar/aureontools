@@ -16,7 +16,14 @@ const registry = resolveRegistry(process.argv, [here, process.cwd(), 'E:/experim
 
 const reg = JSON.parse(readFileSync(registry, 'utf8'));
 reg.root = reg.root || dirname(registry);
-const projects = computeProjects(reg);
+
+// Usage data is the daemon's to write; here it's read-only, so a static page
+// built while hubd has been running still shows sensible tiers.
+let state = { lastSeen: {} };
+try { state = JSON.parse(readFileSync(resolve(dirname(registry), 'hub-state.json'), 'utf8')); }
+catch {}
+
+const projects = computeProjects(reg, state);
 
 const out = resolve(dirname(registry), 'hub.html');
 writeFileSync(

@@ -58,6 +58,17 @@ for a static `hub.html` next to the registry that needs nothing running — open
 disk, but no buttons, and its liveness probe is a best-effort `no-cors` fetch that some
 browsers block.
 
+Once you have more than a screenful of projects, the list tiers itself by use: anything
+touched in the last `recentDays` (default 14) sits up top newest-first, the rest folds
+away under "Everything else". Usage is recorded three ways — clicking a project, starting
+it from the hub, or the daemon noticing its port come up, which catches servers you
+started from a terminal. Ports claimed by more than one project are skipped there, since
+there's no telling which one came up. `"pin": true` forces a project into the top tier,
+`"archive": true` holds it down.
+
+Usage lands in `hub-state.json` beside the registry — separate on purpose, so a
+hand-edited `ports.json` and a machine-written log never fight over the same file.
+
 `hubd` binds loopback only and refuses cross-origin requests, since its API can run any
 command in the registry.
 

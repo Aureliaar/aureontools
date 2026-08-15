@@ -24,7 +24,20 @@ export function resolveRegistry(argv, searchDirs = []) {
   return found;
 }
 
-export function computeProjects(reg) {
+const DAY = 86400e3;
+
+/**
+ * Decorate the registry for display, and sort each project into one of two
+ * tiers. Tiering is derived from use rather than curated: anything touched
+ * inside `recentDays` floats to the top and everything else sinks, so the list
+ * maintains itself as the zoo grows. `pin` / `archive` in the registry override
+ * that when you want a say.
+ */
+export function computeProjects(reg, state = {}) {
+  const lastSeen = state.lastSeen || {};
+  const recentDays = reg.recentDays ?? 14;
+  const cutoff = Date.now() - recentDays * DAY;
+
   // Which ports are claimed by more than one project? Surfaced as a warning badge.
   const portUsers = new Map();
   for (const p of reg.projects) {
@@ -32,14 +45,24 @@ export function computeProjects(reg) {
     if (!portUsers.has(p.port)) portUsers.set(p.port, []);
     portUsers.get(p.port).push(p.name);
   }
-  return reg.projects.map((p) => ({
-    ...p,
-    url: p.port ? `http://localhost:${p.port}/` : null,
-    fileUrl: p.file ? `file:///${(reg.root + '/' + p.file).replace(/\\/g, '/')}` : null,
-    clash: p.port && portUsers.get(p.port).length > 1
-      ? portUsers.get(p.port).filter((n) => n !== p.name)
-      : null,
-  }));
+
+  const projects = reg.projects.map((p) => {
+    const seen = lastSeen[p.name] || null;
+    return {
+      ...p,
+      lastSeen: seen,
+      url: p.port ? `http://localhost:${p.port}/` : null,
+      fileUrl: p.file ? `file:///${(reg.root + '/' + p.file).replace(/\\/g, '/')}` : null,
+      clash: p.port && portUsers.get(p.port).length > 1
+        ? portUsers.get(p.port).filter((n) => n !== p.name)
+        : null,
+      tier: p.archive ? 2 : (p.pin || (seen && seen >= cutoff)) ? 1 : 2,
+    };
+  });
+
+  // Most recently used first; never-used entries keep registry order at the back.
+  projects.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  return projects;
 }
 
 const STYLE = String.raw`
@@ -121,6 +144,19 @@ const STYLE = String.raw`
     font-size: 0.72rem; padding: 0.1rem 0.4rem; border-radius: 4px;
   }
   .note { color: var(--muted); font-size: 0.78rem; font-style: italic; }
+  .seen { color: var(--muted); font-size: 0.72rem; margin-left: auto; white-space: nowrap; }
+  details#rest { margin-top: 2.5rem; border-top: 1px solid var(--line); padding-top: 0.5rem; }
+  details#rest > summary {
+    cursor: pointer; list-style: none; padding: 0.5rem 0;
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); font-weight: 600; user-select: none;
+  }
+  details#rest > summary::-webkit-details-marker { display: none; }
+  details#rest > summary::before { content: '▸ '; display: inline-block; transition: transform 0.15s; }
+  details#rest[open] > summary::before { transform: rotate(90deg); }
+  details#rest > summary:hover { color: var(--accent); }
+  details#rest .card { opacity: 0.82; }
+  details#rest .card:hover { opacity: 1; }
   button {
     font: inherit; font-size: 0.78rem; padding: 0.15rem 0.55rem;
     background: var(--btn); color: var(--btn-ink);
@@ -145,18 +181,56 @@ const GROUPS = [
   ['static', 'Static — just open them'],
   ['service', 'Background services'],
 ];
-const byName = new Map(PROJECTS.map((p) => [p.name, p]));
 const out = document.getElementById('out');
 
-for (const [kind, label] of GROUPS) {
-  const items = PROJECTS.filter((p) => p.kind === kind);
-  if (!items.length) continue;
+function heading(text, count) {
   const h = document.createElement('h2');
-  h.textContent = label + ' (' + items.length + ')';
-  const grid = document.createElement('div');
-  grid.className = 'grid';
-  for (const p of items) grid.appendChild(card(p));
-  out.append(h, grid);
+  h.textContent = count == null ? text : text + ' (' + count + ')';
+  return h;
+}
+function gridOf(items) {
+  const g = document.createElement('div');
+  g.className = 'grid';
+  for (const p of items) g.appendChild(card(p));
+  return g;
+}
+
+// Tier 1: recently used, flat and newest-first — kind matters less than recency
+// when you're reaching for something you had open yesterday.
+const recent = PROJECTS.filter((p) => p.tier === 1);
+if (recent.length) {
+  out.append(heading('Recent', recent.length), gridOf(recent));
+}
+
+// Tier 2: the long tail, folded away and back to grouping by kind.
+const rest = PROJECTS.filter((p) => p.tier !== 1);
+if (rest.length) {
+  const det = document.createElement('details');
+  det.id = 'rest';
+  det.open = !recent.length; // nothing recent yet? don't hide everything
+  const sum = document.createElement('summary');
+  sum.textContent = 'Everything else (' + rest.length + ')';
+  det.appendChild(sum);
+  for (const [kind, label] of GROUPS) {
+    const items = rest.filter((p) => p.kind === kind);
+    if (!items.length) continue;
+    det.append(heading(label, items.length), gridOf(items));
+  }
+  out.appendChild(det);
+  det.addEventListener('toggle', () => localStorage.setItem('hub.rest', det.open ? '1' : '0'));
+  const saved = localStorage.getItem('hub.rest');
+  if (saved !== null) det.open = saved === '1';
+}
+
+const RTF = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+const UNITS = [['year', 31536e6], ['month', 2592e6], ['week', 6048e5], ['day', 864e5], ['hour', 36e5], ['minute', 6e4]];
+function ago(ts) {
+  if (!ts) return 'never opened';
+  const diff = ts - Date.now();
+  for (const [unit, ms] of UNITS) {
+    if (Math.abs(diff) >= ms) return RTF.format(Math.round(diff / ms), unit);
+  }
+  return 'just now';
 }
 
 function card(p) {
@@ -178,6 +252,11 @@ function card(p) {
   a.className = 'name';
   a.textContent = p.name;
   a.href = p.url || p.fileUrl || '#';
+  a.target = '_blank';
+  a.rel = 'noopener';
+  // Opening it counts as using it. A click names the project, which is the only
+  // way to attribute usage when several share a port.
+  a.addEventListener('click', () => touch(p.name));
   row.appendChild(a);
   row.appendChild(Object.assign(document.createElement('span'), { className: 'spacer' }));
 
@@ -218,6 +297,10 @@ function card(p) {
     w.title = 'Also claimed by: ' + p.clash.join(', ');
     meta.appendChild(w);
   }
+  const seen = Object.assign(document.createElement('span'), { className: 'seen', textContent: ago(p.lastSeen) });
+  seen.dataset.seenFor = p.name;
+  if (p.lastSeen) seen.title = new Date(p.lastSeen).toLocaleString();
+  meta.appendChild(seen);
   el.appendChild(meta);
 
   if (p.note) el.appendChild(Object.assign(document.createElement('div'), { className: 'note', textContent: p.note }));
@@ -229,6 +312,15 @@ function card(p) {
 }
 
 function cardEl(name) { return document.querySelector('.card[data-name="' + CSS.escape(name) + '"]'); }
+
+// sendBeacon survives the navigation the click is about to cause.
+function touch(name) {
+  const span = document.querySelector('[data-seen-for="' + CSS.escape(name) + '"]');
+  if (span) { span.textContent = 'just now'; span.title = new Date().toLocaleString(); }
+  if (!INTERACTIVE) return;
+  const body = new Blob([JSON.stringify({ name })], { type: 'application/json' });
+  navigator.sendBeacon('/api/touch', body);
+}
 
 async function act(what, name, btn) {
   btn.disabled = true;
@@ -287,6 +379,8 @@ async function pumpLogs() {
 
 // --- filter ---
 const q = document.getElementById('q');
+const rest = document.getElementById('rest');
+let restWasOpen = null;
 q.addEventListener('input', () => {
   const term = q.value.trim().toLowerCase();
   for (const c of document.querySelectorAll('.card')) {
@@ -296,6 +390,17 @@ q.addEventListener('input', () => {
     const grid = h.nextElementSibling;
     const any = [...grid.children].some((c) => !c.classList.contains('hidden'));
     h.style.display = grid.style.display = any ? '' : 'none';
+  }
+  // A search should reach into the folded tier, then leave it as it was.
+  if (rest) {
+    if (term && restWasOpen === null) restWasOpen = rest.open;
+    if (term) rest.open = true;
+    else if (restWasOpen !== null) { rest.open = restWasOpen; restWasOpen = null; }
+    const hits = [...rest.querySelectorAll('.card')].filter((c) => !c.classList.contains('hidden')).length;
+    rest.style.display = term && !hits ? 'none' : '';
+    rest.querySelector('summary').textContent =
+      term ? 'Everything else — ' + hits + ' match' + (hits === 1 ? '' : 'es')
+           : 'Everything else (' + rest.querySelectorAll('.card').length + ')';
   }
 });
 document.addEventListener('keydown', (e) => {
@@ -317,17 +422,16 @@ async function probeStatic(port) {
 async function getStatus() {
   if (INTERACTIVE) {
     const r = await fetch('/api/state', { cache: 'no-store' });
-    const { status } = await r.json();
-    return status; // { port: {listening, managed, pid} }
+    return r.json(); // { status: {port: {...}}, lastSeen: {name: ts} }
   }
   const ports = [...new Set([...document.querySelectorAll('.dot')].map((d) => d.dataset.port))];
   const pairs = await Promise.all(ports.map(async (p) => [p, { listening: await probeStatic(p) }]));
-  return Object.fromEntries(pairs);
+  return { status: Object.fromEntries(pairs), lastSeen: {} };
 }
 
 async function refresh() {
-  let status;
-  try { status = await getStatus(); }
+  let status, lastSeen;
+  try { ({ status, lastSeen } = await getStatus()); }
   catch {
     document.getElementById('probe-msg').textContent = 'daemon unreachable';
     for (const d of document.querySelectorAll('.dot')) { d.className = 'dot'; d.title = 'unknown'; }
@@ -341,6 +445,11 @@ async function refresh() {
       ? (s.managed ? 'running — started by the hub (pid ' + s.pid + ')' : 'listening — started elsewhere')
       : 'not running';
   }
+  for (const [name, ts] of Object.entries(lastSeen || {})) {
+    const span = document.querySelector('[data-seen-for="' + CSS.escape(name) + '"]');
+    if (span) { span.textContent = ago(ts); span.title = new Date(ts).toLocaleString(); }
+  }
+
   const live = Object.values(status).filter((s) => s.listening).length;
   const total = new Set(dots.map((d) => d.dataset.port)).size;
   document.getElementById('probe-msg').textContent = live + ' of ' + total + ' ports live';
