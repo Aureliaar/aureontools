@@ -183,6 +183,19 @@ const GROUPS = [
 ];
 const out = document.getElementById('out');
 
+// Declared before the render pass: card() calls ago(), and a const referenced
+// before its initialiser is a TDZ error, not a hoisted undefined.
+const RTF = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+const UNITS = [['year', 31536e6], ['month', 2592e6], ['week', 6048e5], ['day', 864e5], ['hour', 36e5], ['minute', 6e4]];
+function ago(ts) {
+  if (!ts) return 'never opened';
+  const diff = ts - Date.now();
+  for (const [unit, ms] of UNITS) {
+    if (Math.abs(diff) >= ms) return RTF.format(Math.round(diff / ms), unit);
+  }
+  return 'just now';
+}
+
 function heading(text, count) {
   const h = document.createElement('h2');
   h.textContent = count == null ? text : text + ' (' + count + ')';
@@ -203,16 +216,16 @@ if (recent.length) {
 }
 
 // Tier 2: the long tail, folded away and back to grouping by kind.
-const rest = PROJECTS.filter((p) => p.tier !== 1);
-if (rest.length) {
+const tail = PROJECTS.filter((p) => p.tier !== 1);
+if (tail.length) {
   const det = document.createElement('details');
   det.id = 'rest';
   det.open = !recent.length; // nothing recent yet? don't hide everything
   const sum = document.createElement('summary');
-  sum.textContent = 'Everything else (' + rest.length + ')';
+  sum.textContent = 'Everything else (' + tail.length + ')';
   det.appendChild(sum);
   for (const [kind, label] of GROUPS) {
-    const items = rest.filter((p) => p.kind === kind);
+    const items = tail.filter((p) => p.kind === kind);
     if (!items.length) continue;
     det.append(heading(label, items.length), gridOf(items));
   }
@@ -220,17 +233,6 @@ if (rest.length) {
   det.addEventListener('toggle', () => localStorage.setItem('hub.rest', det.open ? '1' : '0'));
   const saved = localStorage.getItem('hub.rest');
   if (saved !== null) det.open = saved === '1';
-}
-
-const RTF = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-const UNITS = [['year', 31536e6], ['month', 2592e6], ['week', 6048e5], ['day', 864e5], ['hour', 36e5], ['minute', 6e4]];
-function ago(ts) {
-  if (!ts) return 'never opened';
-  const diff = ts - Date.now();
-  for (const [unit, ms] of UNITS) {
-    if (Math.abs(diff) >= ms) return RTF.format(Math.round(diff / ms), unit);
-  }
-  return 'just now';
 }
 
 function card(p) {
@@ -379,7 +381,7 @@ async function pumpLogs() {
 
 // --- filter ---
 const q = document.getElementById('q');
-const rest = document.getElementById('rest');
+const restEl = document.getElementById('rest');
 let restWasOpen = null;
 q.addEventListener('input', () => {
   const term = q.value.trim().toLowerCase();
@@ -392,15 +394,15 @@ q.addEventListener('input', () => {
     h.style.display = grid.style.display = any ? '' : 'none';
   }
   // A search should reach into the folded tier, then leave it as it was.
-  if (rest) {
-    if (term && restWasOpen === null) restWasOpen = rest.open;
-    if (term) rest.open = true;
-    else if (restWasOpen !== null) { rest.open = restWasOpen; restWasOpen = null; }
-    const hits = [...rest.querySelectorAll('.card')].filter((c) => !c.classList.contains('hidden')).length;
-    rest.style.display = term && !hits ? 'none' : '';
-    rest.querySelector('summary').textContent =
+  if (restEl) {
+    if (term && restWasOpen === null) restWasOpen = restEl.open;
+    if (term) restEl.open = true;
+    else if (restWasOpen !== null) { restEl.open = restWasOpen; restWasOpen = null; }
+    const hits = [...restEl.querySelectorAll('.card')].filter((c) => !c.classList.contains('hidden')).length;
+    restEl.style.display = term && !hits ? 'none' : '';
+    restEl.querySelector('summary').textContent =
       term ? 'Everything else — ' + hits + ' match' + (hits === 1 ? '' : 'es')
-           : 'Everything else (' + rest.querySelectorAll('.card').length + ')';
+           : 'Everything else (' + restEl.querySelectorAll('.card').length + ')';
   }
 });
 document.addEventListener('keydown', (e) => {
@@ -458,6 +460,16 @@ async function refresh() {
 refresh();
 setInterval(refresh, INTERACTIVE ? 3000 : 10000);
 `;
+
+// The client script is a string, so nothing type-checks it and a syntax error
+// ships as a blank page with a dead "checking…" header. Parse it once at import
+// (new Function compiles without running, so undefined globals are fine) and
+// fail loudly here instead.
+try {
+  new Function(CLIENT);
+} catch (e) {
+  throw new Error(`hub client script does not parse: ${e.message}`);
+}
 
 export function page({ projects, interactive, footer }) {
   return `<title>Experiments Hub</title>
