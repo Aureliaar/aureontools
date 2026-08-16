@@ -52,13 +52,13 @@ const consoleErrors = log
   .filter((l) => /INFO:CONSOLE/.test(l) && /Uncaught|Error/.test(l))
   .map((l) => l.replace(/^.*INFO:CONSOLE[^\]]*\]\s*/, '').trim());
 
-const cards = (dom.match(/class="card"/g) || []).length;
+const cards = (dom.match(/class="row(?: child)?"/g) || []).length;
 const stillChecking = /<span id="probe-msg">checking…<\/span>/.test(dom);
 
 const problems = [];
 if (!dom) problems.push('browser produced no DOM (is the hub running on ' + url + '?)');
 if (consoleErrors.length) problems.push('console errors:\n    ' + consoleErrors.join('\n    '));
-if (cards === 0) problems.push('no project cards rendered');
+if (cards === 0) problems.push('no project rows rendered');
 if (stillChecking) problems.push('liveness never resolved — probe-msg still reads "checking…"');
 
 if (problems.length) {
@@ -68,6 +68,11 @@ if (problems.length) {
 }
 
 const live = (dom.match(/class="dot up"/g) || []).length;
-const recent = (dom.match(/Recent \((\d+)\)/) || [])[1] ?? '0';
+const children = (dom.match(/class="row child"/g) || []).length;
+const recent = (dom.match(/Running \/ recent \((\d+)\)/) || [])[1] ?? '0';
 const tail = (dom.match(/Everything else \((\d+)\)/) || [])[1] ?? '0';
-console.log(`hub render check OK — ${cards} cards (${recent} recent, ${tail} folded), ${live} live`);
+const orphans = (dom.match(/Unregistered[^(]*\((\d+)\)/) || [])[1] ?? '0';
+console.log(
+  `hub render check OK — ${cards} rows (${recent} recent, ${children} nested, ` +
+  `${orphans} unregistered, ${tail} folded), ${live} live`
+);

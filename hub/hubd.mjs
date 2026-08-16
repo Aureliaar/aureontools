@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { page, computeProjects, resolveRegistry } from './hub-ui.mjs';
+import { attribute } from './discover.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -137,9 +138,12 @@ function stop(name) {
 
 // ---------------------------------------------------------------- liveness
 
-function isListening(port, timeout = 400) {
+function isListening(port, timeout = 500) {
   return new Promise((done) => {
-    const sock = connect({ host: '127.0.0.1', port, timeout });
+    // 'localhost', not '127.0.0.1': Vite and friends often bind ::1 only, and an
+    // IPv4-only probe reports a perfectly healthy server as down. Node tries
+    // both families for a hostname.
+    const sock = connect({ host: 'localhost', port, timeout, autoSelectFamily: true });
     const finish = (v) => { sock.destroy(); done(v); };
     sock.once('connect', () => finish(true));
     sock.once('timeout', () => finish(false));
@@ -150,9 +154,38 @@ function isListening(port, timeout = 400) {
 /** port -> was it up last poll? Used to spot the moment something comes up. */
 const prevLive = new Map();
 
+// Discovery shells out to netstat and PowerShell, far too heavy for the 3s
+// status poll, so it runs on its own slower cadence and everything reads the
+// cache. Ports found this way still need probing, or their dots never resolve.
+const DISCOVER_TTL = 15e3;
+let discovery = { at: 0, children: {}, orphans: [] };
+
+async function refreshDiscovery(reg, force = false) {
+  if (!force && Date.now() - discovery.at < DISCOVER_TTL) return discovery;
+  try {
+    const found = await attribute(reg.projects, reg.root);
+    found.orphans = found.orphans.filter((o) => o.pid !== process.pid);
+    discovery = { at: Date.now(), ...found };
+  } catch (e) {
+    console.error(`[hubd] discovery failed: ${e.message}`);
+    discovery = { ...discovery, at: Date.now() };
+  }
+  return discovery;
+}
+
+function discoveredPorts() {
+  return [
+    ...Object.values(discovery.children).flat().map((c) => c.port),
+    ...discovery.orphans.map((o) => o.port),
+  ];
+}
+
 async function status() {
   const reg = loadRegistry();
-  const ports = [...new Set(reg.projects.filter((p) => p.port).map((p) => p.port))];
+  const ports = [...new Set([
+    ...reg.projects.filter((p) => p.port).map((p) => p.port),
+    ...discoveredPorts(),
+  ])];
   const live = Object.fromEntries(
     await Promise.all(ports.map(async (port) => [port, await isListening(port)]))
   );
@@ -219,12 +252,17 @@ const server = createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       const reg = loadRegistry();
+      // Servers running somewhere the registry can't see — chiefly inside the
+      // project's own worktrees, which is where agent work actually happens.
+      const discovered = await refreshDiscovery(reg);
       const st = await status();
       const livePorts = new Set(
         Object.entries(st).filter(([, v]) => v.listening).map(([p]) => Number(p))
       );
+
       const html = page({
-        projects: computeProjects(reg, state, livePorts),
+        projects: computeProjects(reg, state, livePorts, discovered),
+        orphans: discovered.orphans,
         interactive: true,
         footer: `Served by <code>hubd.mjs</code> from <code>${REGISTRY}</code>, usage in ` +
                 `<code>hub-state.json</code>. Add a project to the registry — no restart needed. ` +
@@ -236,6 +274,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/state') {
+      refreshDiscovery(loadRegistry()).catch(() => {}); // refresh in the background
       return json(res, 200, { status: await status(), lastSeen: state.lastSeen });
     }
 
