@@ -66,6 +66,13 @@ started from a terminal. Ports claimed by more than one project are skipped ther
 there's no telling which one came up. `"pin": true` forces a project into the top tier,
 `"archive": true` holds it down.
 
+For a taskbar entry, `hub\New-HubShortcut.ps1` creates a Start Menu shortcut that opens
+the hub as a Chromium `--app` window — no tabs, no omnibox — with a generated icon
+(`make-icon.mjs` writes `hub.ico` with no image libraries). It also stamps the shortcut's
+AppUserModelID to match the one Chrome gives the app window, so the pinned icon and the
+running window are a single taskbar button rather than two. Windows won't let a script
+pin anything, so the final right-click → Pin to taskbar is yours.
+
 Usage lands in `hub-state.json` beside the registry — separate on purpose, so a
 hand-edited `ports.json` and a machine-written log never fight over the same file.
 
