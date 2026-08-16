@@ -33,7 +33,7 @@ const DAY = 86400e3;
  * maintains itself as the zoo grows. `pin` / `archive` in the registry override
  * that when you want a say.
  */
-export function computeProjects(reg, state = {}) {
+export function computeProjects(reg, state = {}, livePorts = new Set()) {
   const lastSeen = state.lastSeen || {};
   const recentDays = reg.recentDays ?? 14;
   const cutoff = Date.now() - recentDays * DAY;
@@ -48,20 +48,25 @@ export function computeProjects(reg, state = {}) {
 
   const projects = reg.projects.map((p) => {
     const seen = lastSeen[p.name] || null;
+    // Something answering on its port right now is the most relevant thing on
+    // the page, whatever its history says — so liveness alone earns tier 1.
+    const live = !!p.port && livePorts.has(p.port);
     return {
       ...p,
       lastSeen: seen,
+      live,
       url: p.port ? `http://localhost:${p.port}/` : null,
       fileUrl: p.file ? `file:///${(reg.root + '/' + p.file).replace(/\\/g, '/')}` : null,
       clash: p.port && portUsers.get(p.port).length > 1
         ? portUsers.get(p.port).filter((n) => n !== p.name)
         : null,
-      tier: p.archive ? 2 : (p.pin || (seen && seen >= cutoff)) ? 1 : 2,
+      tier: live ? 1 : p.archive ? 2 : (p.pin || (seen && seen >= cutoff)) ? 1 : 2,
     };
   });
 
-  // Most recently used first; never-used entries keep registry order at the back.
-  projects.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  // Running first, then most recently used; never-used entries keep registry
+  // order at the back.
+  projects.sort((a, b) => (b.live - a.live) || ((b.lastSeen || 0) - (a.lastSeen || 0)));
   return projects;
 }
 

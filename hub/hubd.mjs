@@ -219,8 +219,12 @@ const server = createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       const reg = loadRegistry();
+      const st = await status();
+      const livePorts = new Set(
+        Object.entries(st).filter(([, v]) => v.listening).map(([p]) => Number(p))
+      );
       const html = page({
-        projects: computeProjects(reg, state),
+        projects: computeProjects(reg, state, livePorts),
         interactive: true,
         footer: `Served by <code>hubd.mjs</code> from <code>${REGISTRY}</code>, usage in ` +
                 `<code>hub-state.json</code>. Add a project to the registry — no restart needed. ` +
@@ -270,8 +274,25 @@ server.on('error', (e) => {
   throw e;
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, '127.0.0.1', async () => {
   console.log(`[hubd] http://localhost:${PORT}  ·  registry: ${REGISTRY}`);
+
+  // Anything already up when we start never produces a down->up transition, so
+  // record it here or it stays invisible to recency for as long as it runs.
+  // (It still shows in the top tier while live, but this is what makes it stay
+  // there afterwards.) Ambiguous shared ports are skipped, as in status().
+  const first = await status();
+  const reg0 = loadRegistry();
+  const seeded = [];
+  for (const [port, s] of Object.entries(first)) {
+    if (!s.listening) continue;
+    const owners = reg0.projects.filter((p) => p.port === Number(port));
+    if (owners.length === 1 && !state.lastSeen[owners[0].name]) {
+      touch(owners[0].name);
+      seeded.push(owners[0].name);
+    }
+  }
+  if (seeded.length) console.log(`[hubd] already running: ${seeded.join(', ')}`);
 
   if (NO_AUTOSTART) return;
   const reg = loadRegistry();
